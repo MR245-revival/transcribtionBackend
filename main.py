@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Depends, UploadFile, File, Form
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 import os
 import uuid
+import shutil
 
 from jobs import create_job, get_job, job_to_dict, start_transcribe_job, UPLOAD_DIR
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,8 +83,9 @@ def transcribe_upload(
     fname = f"{uuid.uuid4()}{ext}"
     path = os.path.join(UPLOAD_DIR, fname)
 
+    # Große Dateien nicht komplett in den RAM laden.
     with open(path, "wb") as f:
-        f.write(file.file.read())
+        shutil.copyfileobj(file.file, f, length=1024 * 1024)
 
     job = create_job(kind="transcribe", input_path=path)
     start_transcribe_job(job.id, with_timestamps=with_timestamps, diarize_speakers=diarize_speakers)
@@ -94,14 +96,14 @@ def transcribe_upload(
 def get_job_status(job_id: str, user: User = Depends(require_user)):
     job = get_job(job_id)
     if not job:
-        return {"ok": False, "message": "Job not found"}
+        raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True, "job": job_to_dict(job)}
 
 @app.get("/jobs/{job_id}/result.txt")
 def download_result_txt(job_id: str, user: User = Depends(require_user)):
     job = get_job(job_id)
     if not job or not job.result_txt_path:
-        return {"ok": False, "message": "TXT export not available"}
+        raise HTTPException(status_code=404, detail="TXT export not available")
     return FileResponse(
         job.result_txt_path,
         media_type="text/plain; charset=utf-8",
@@ -113,7 +115,7 @@ def download_result_txt(job_id: str, user: User = Depends(require_user)):
 def download_result_json(job_id: str, user: User = Depends(require_user)):
     job = get_job(job_id)
     if not job or not job.result_json_path:
-        return {"ok": False, "message": "JSON export not available"}
+        raise HTTPException(status_code=404, detail="JSON export not available")
     return FileResponse(
         job.result_json_path,
         media_type="application/json; charset=utf-8",

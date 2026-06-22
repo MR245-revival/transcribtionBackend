@@ -23,18 +23,38 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 # ---------------- Whisper Model Cache ----------------
 _model_lock = Lock()
 _model: Optional[WhisperModel] = None
+_model_key: Optional[Tuple[str, str]] = None
 
 
 def get_whisper_model() -> WhisperModel:
     """Cached WhisperModel. GPU: device="cuda", compute_type="float16" ist ideal."""
-    global _model
+    global _model, _model_key
     with _model_lock:
-        if _model is None:
-            _model = WhisperModel(
-                "large-v3",
-                device="cuda",
-                compute_type="float16",
-            )
+        desired_key = (
+            os.environ.get("WHISPER_MODEL", "large-v3"),
+            os.environ.get("WHISPER_DEVICE", "cuda"),
+        )
+        if _model is None or _model_key != desired_key:
+            model_name, device = desired_key
+            compute_type = os.environ.get("WHISPER_COMPUTE_TYPE")
+            if not compute_type:
+                compute_type = "float16" if device == "cuda" else "int8"
+
+            try:
+                _model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                )
+                _model_key = desired_key
+            except Exception:
+                # Robuster Fallback, wenn CUDA/FP16 nicht verfügbar ist.
+                _model = WhisperModel(
+                    model_name,
+                    device="cpu",
+                    compute_type="int8",
+                )
+                _model_key = (model_name, "cpu")
         return _model
 
 
@@ -243,6 +263,7 @@ def _run_transcribe(job_id: str, with_timestamps: bool, diarize_speakers: bool) 
     if not job:
         return
 
+    wav_path: Optional[str] = None
     update_job(job_id, status="running", started_at=time.time(), message="Starte…", progress=1, eta_seconds=60)
 
     try:
@@ -442,3 +463,15 @@ def _run_transcribe(job_id: str, with_timestamps: bool, diarize_speakers: bool) 
 
     except Exception as e:
         update_job(job_id, status="error", error=str(e), message="Fehler", finished_at=time.time())
+    finally:
+        # Aufräumen, damit lange Jobs keinen unnötigen Speicherplatz belegen.
+        try:
+            if job and job.input_path and os.path.exists(job.input_path):
+                os.remove(job.input_path)
+        except Exception:
+            pass
+        try:
+            if wav_path and os.path.exists(wav_path):
+                os.remove(wav_path)
+        except Exception:
+            pass
