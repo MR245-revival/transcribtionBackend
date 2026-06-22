@@ -76,7 +76,7 @@ def transcribe_upload(
 ):
     ext = os.path.splitext(file.filename or "")[1].lower()
 
-    allowed = [".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".webm", ".dss", ".ds2"]
+    allowed = [".wav", ".mp3", ".mpeg", ".m4a", ".flac", ".ogg", ".aac", ".webm", ".dss", ".ds2"]
     if ext not in allowed:
         return {"ok": False, "message": "Unsupported file type"}
 
